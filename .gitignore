@@ -17,5 +17,7 @@ dist/
 lib
 wdio.log
 
+build/
+
 # Cargo build output
 target/
