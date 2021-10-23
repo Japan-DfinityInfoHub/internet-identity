@@ -1,3 +1,73 @@
+# Internet Identity のための Windows Hello ガイド
+
+Internet Identity は、認証方法として Windows Hello をサポートしています。
+このガイドでは、携帯電話またはセキュリティキーを使用して設定された既存の Identity Anchor に、Windows Hello 認証を設定する方法を説明します。
+設定方法は、以下のオプション A と B でそれぞれ説明します。
+
+## Windows マシンが Windows Hello に対応しているか確認する
+
+Windowsの「設定」を開き、「アカウント」を選択します。
+
+image::hello-guide/settings-accounts.png[]
+
+次に、「サインインオプション」を選択します。
+
+image::hello-guide/settings-sign-in.png[]
+
+お使いのデバイスがサインインのために Windows Hello をサポートしていることを確認してください。
+
+image::hello-guide/settings-hello.png[]
+
+お使いのデバイスが Windows Hello に対応していれば、次に進みます。
+携帯電話を使用して Identity Anchor を設定した場合はオプション A、セキュリティキーを使用した場合はオプション B に進みます。
+
+## オプション A: 携帯電話を認証手段として使用する Identity Anchor に Windows Hello を追加する
+
+Windows パソコンで <https://identity.ic0.app> にアクセスし、"Already have anchor but using new device?" をクリックしてください。
+
+image::hello-guide/add-device-start.png[]
+
+Identity Anchorを入力してください。
+
+image::hello-guide/add-device-anchor.png[]
+
+Windows Hello を使って認証を行い、ダイアログを完成させてください。
+
+image::hello-guide/add-device-hello.png[]
+
+リンクが表示されたら、"Display as QR Code" をクリックします。
+
+image::hello-guide/add-device-show-link.png[]
+
+携帯電話で QR コードを読み取ってください。
+
+image::hello-guide/add-device-show-qr.png[]
+
+引き続き携帯電話で、新しい Windows Hello デバイスを追加するための手順に従います。
+携帯電話での作業が完了すると、Windows マシンで Windows Hello を使った認証ができるようになります。
+
+image::hello-guide/login-hello.png[]
+
+## オプション B: セキュリティキーを認証方法として使用する Identity Anchor に Windows Hello を追加する
+
+Windows パソコンで <https://identity.ic0.app> にアクセスし、セキュリティキーを使って認証すると、アンカーマネジメントのページが表示されます。
+このページで "+ ADD NEW DEVICE" をクリックします。
+
+image::hello-guide/anchor-management.png[]
+
+Windows Hello ダイアログを完成させてください。
+
+image::hello-guide/management-add-device-dialog.png[]
+
+Windowsマシンの名前をつけます。
+
+image::hello-guide/management-add-device-name.png[]
+
+ページをリフレッシュして更新すると、Windows Hello での認証ができるようになります。
+
+image::hello-guide/login-hello.png[]
+
+////
 # Windows Hello Guide for Internet Identity
 
 Internet Identity supports Windows Hello as an authentication method. This guide explains how to set up Windows Hello authentication for an existing Identity Anchor that was set up either on your phone or using a security key. The setup is explained below in Options A and B, respectively.
@@ -61,3 +131,4 @@ image::hello-guide/management-add-device-name.png[]
 If you refresh the page, you should now be able to authenticate with Windows Hello
 
 image::hello-guide/login-hello.png[]
+////
