@@ -23,7 +23,7 @@ Internet Identity では、スマートフォンやラップトップ PC に内�
 
 Internet Identity を組み込んだ Dapps では、Identity Anchor を使用して認証を行うよう促されます。
 まだ Identity Anchor を持っていない場合は、簡単に作成して認証方法を追加することができます。
-詳細については、link:https://sdk.dfinity.org/docs/ic-identity-guide/auth-how-to.html[Internet Identity の使い方]を参照してください。
+詳細については、link:auth-how-to{outfilesuffix}[Internet Identity の使い方]を参照してください。
 追加したデバイスごとに、暗号鍵のペア(秘密鍵と公開鍵)が生成されます。
 公開鍵は {IC} のブロックチェーンに保存されます。
 Identity Anchorに複数の認証方法を追加すると、すべてのデバイスで Dapps にアクセスできるようになります。
@@ -40,7 +40,7 @@ Dapp は Internet Identity からの認証を確認し、アプリケーショ�
 同じデバイスを用いる他のユーザに異なる認証プロファイルを設定したり、Internet Identity を使用するサービスへのアクセスを確保するために、必要な数の Identity Anchor をいくつでも登録することができます。
 
 == Internet Identity の使い方
-Identity Anchor の作成と使用方法を順を追って学ぶためには、link:https://sdk.dfinity.org/docs/ic-identity-guide/auth-how-to.html[Internet Identity の使い方]をご覧ください。
+Identity Anchor の作成と使用方法を順を追って学ぶためには、link:auth-how-to{outfilesuffix}[Internet Identity の使い方]をご覧ください。
 また、Identity Anchors のリカバリーに関する設定方法についても説明しています。
 
 ////
