@@ -5,31 +5,28 @@
 :company-id: DFINITY
 :sdk-short-name: DFINITY Canister SDK
 
-_Internet Identity_ は、{IC} ブロックチェーン上に実装された canister スマートコントラクトです。
-{IC} 上の Dapps にアクセスする際に、安全かつ匿名で認証を行うことができます。
+_Internet Identity_ は、{IC} がサポートする匿名のブロックチェーン認証フレームワークです。
 認証するためには、_Identity Anchor_ を指定する必要があります。
-Identity Anchor を使用して認証する各 Dapp に対して、その Identity Anchor に基づいて Internet Identity はその Dapp に固有の _偽名_ を作成します。
-この偽名は、他の誰かがあなたの Identity Anchor と紐付けることはできません。
-セキュリティキーや、コンピュータや携帯電話の顔認証など、複数の _認証方法_ を Identity Anchor に追加することができ、その Identity Anchor を使用した認証には、それらの認証方法を使用することができます。
-また、Identity Anchor はいくつでも作成することができます。
+ユーザーは ID の "アンカー" を作成し、ノート PC の指紋センサー、携帯電話の フェイス ID システム、YubiKey や Ledger ウォレットなどのポータブル HSM など、互換性のある暗号化デバイスを割り当てることができます。
+その後、{IC} 上で動作する任意の Dapp に登録し、アンカーに割り当てられた任意のデバイスを使って認証することができます。これにより、ユーザーは最高レベルの暗号セキュリティの恩恵を受けながらも、自分自身で暗号鍵を直接管理する必要がなく、ミスや秘密鍵の盗難を防ぐことができ、非常に少ない労力で Dapps を認証することができるという高い利便性を実現しています。
+このシステムは Dapp に対して匿名化されており、アンカーが Dapp とのやり取りに使われるたびに、Dapp は特別に生成された _偽名_ を見ることになり、ユーザーが使用する様々な Dapp 間で追跡されることを防ぎます。また、Identity Anchor は好きなだけいくつでも作成することができます。
 
 一般的な認証方法とは異なり、Internet Identity では、自分でパスワードを設定・管理したり、個人識別情報を Dapps や Internet Identity に提供する必要はありません。
 
 [[id-overview]]
 == Internet Identity の仕組み
 
-Internet Identity は、ウェブ認証（WebAuthn）API を利用して、{IC} 上で動作する Dapps にスマートコントラクトを用いた安全な暗号認証を提供します。
-Internet Identity では、スマートフォンやラップトップ PC に内蔵されたセキュリティモジュールや、コンピュータの USB ポートに差し込まれたセキュリティキーを使用して、{IC} 上で動作する Dapps の認証やアクセスの認可を行うことができます。
+Internet Identity は、最新の Web ブラウザや OS でサポートされている Web 認証 (WebAuthn) API と、{IC} を支えるチェーンキー暗号のフレームワークをベースに構築されています。基本的に、{IC} はマスターチェーンキーを使用して、各アンカーに割り当てられたデバイス内の公開キーのリストに署名します。このマスターチェーンキーは、ウェブブラウザで実行されるクライアントサイドのコードなどで認識されます。
 
 Internet Identity を組み込んだ Dapps では、Identity Anchor を使用して認証を行うよう促されます。
 まだ Identity Anchor を持っていない場合は、簡単に作成して認証方法を追加することができます。
 詳細については、link:auth-how-to{outfilesuffix}[Internet Identity の使い方]を参照してください。
 追加したデバイスごとに、暗号鍵のペア(秘密鍵と公開鍵)が生成されます。
-公開鍵は {IC} のブロックチェーンに保存されます。
+公開鍵は {IC} のブロックチェーンに保存され、秘密鍵は認証デバイスの中にアクセスを管理する生体認証データとともに保管されます。
 Identity Anchorに複数の認証方法を追加すると、すべてのデバイスで Dapps にアクセスできるようになります。
 
 認証に Internet Identity を使用する Dapp にアクセスする際には、まず使用する Identity Anchor を指定します。
-Identity Anchor を使用して認証すると、ブラウザは Internet Identity に接続し、その Dapp で使用するキーを生成します。
+設定されたデバイスを使って Identity Anchor を使用して認証すると、ブラウザは Internet Identity に接続し、その Dapp で使用するキーを生成します。
 最後に、その Dapp へのアクセスを承認するように画面上で求められます。
 
 ブラウザは認証をダウンロードしてから、Dapp にリダイレクトします。
@@ -37,7 +34,6 @@ Dapp は Internet Identity からの認証を確認し、アプリケーショ�
 内部的には、あなたは各 Dapp に対して異なる偽名を持っていますが、単一の Dapp に対する偽名はすべてのデバイスで同じです。
 すべてのデバイスは、Identity Anchor の認証に使用できるさまざまな方法だけをあなたに示します。
 
-同じデバイスを用いる他のユーザに異なる認証プロファイルを設定したり、Internet Identity を使用するサービスへのアクセスを確保するために、必要な数の Identity Anchor をいくつでも登録することができます。
 
 == Internet Identity の使い方
 Identity Anchor の作成と使用方法を順を追って学ぶためには、link:auth-how-to{outfilesuffix}[Internet Identity の使い方]をご覧ください。
