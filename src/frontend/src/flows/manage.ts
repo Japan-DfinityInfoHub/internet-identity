@@ -15,7 +15,7 @@ import { displayError } from "../components/displayError";
 import { pickDeviceAlias } from "./addDevicePickAlias";
 import { WebAuthnIdentity } from "@dfinity/identity";
 import { setupRecovery } from "./recovery/setupRecovery";
-import { hasOwnProperty } from "../utils/utils";
+import { hasOwnProperty, unknownToString } from "../utils/utils";
 
 // The various error messages we may display
 
@@ -57,50 +57,6 @@ const displayFailedToListDevices = (error: Error) =>
 // The styling of the page
 
 const style = () => html`<style>
-  .nagBox {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 1rem;
-    margin-bottom: 2rem;
-    box-sizing: border-box;
-    border-style: double;
-    border-width: 2px;
-    border-radius: 4px;
-    border-image-slice: 1;
-    outline: none;
-    border-image-source: linear-gradient(
-      270.05deg,
-      #29abe2 10.78%,
-      #522785 22.2%,
-      #ed1e79 42.46%,
-      #f15a24 59.41%,
-      #fbb03b 77.09%
-    );
-  }
-  .nagIcon {
-    align-self: flex-start;
-  }
-  .recoveryNag {
-    display: flex;
-    flex-direction: column;
-  }
-  .recoveryNagTitle {
-    font-weight: 600;
-    font-size: 1.1rem;
-  }
-  .recoveryNagMessage {
-    margin-top: 0.5rem;
-    margin-bottom: 1rem;
-    font-size: 1rem;
-  }
-  .recoveryNagButton {
-    padding: 0.2rem 0.4rem;
-    border-radius: 2px;
-    width: fit-content;
-    align-self: flex-end;
-    margin: 0;
-  }
   .labelWithAction {
     margin-top: 1rem;
     display: flex;
@@ -179,12 +135,12 @@ const deviceListItem = (alias: string) => html`
 const recoveryNag = () => html`
   <div class="nagBox">
     <div class="nagIcon">${warningIcon}</div>
-    <div class="recoveryNag">
-      <div class="recoveryNagTitle">Recovery Mechanism</div>
-      <div class="recoveryNagMessage">
+    <div class="nagContent">
+      <div class="nagTitle">Recovery Mechanism</div>
+      <div class="nagMessage">
         Add a recovery mechanism to help protect this Identity Anchor.
       </div>
-      <button id="addRecovery" class="primary recoveryNagButton">
+      <button id="addRecovery" class="primary nagButton">
         Add Recovery Key
       </button>
     </div>
@@ -201,8 +157,10 @@ export const renderManage = async (
   let devices: DeviceData[];
   try {
     devices = await withLoader(() => IIConnection.lookupAll(userNumber));
-  } catch (error) {
-    await displayFailedToListDevices(error);
+  } catch (error: unknown) {
+    await displayFailedToListDevices(
+      error instanceof Error ? error : unknownError()
+    );
     return renderManage(userNumber, connection);
   }
   render(pageContent(userNumber, devices), container);
@@ -222,8 +180,10 @@ const addAdditionalDevice = async (
     newDevice = await WebAuthnIdentity.create({
       publicKey: creationOptions(devices),
     });
-  } catch (error) {
-    await displayFailedToAddNewDevice(error);
+  } catch (error: unknown) {
+    await displayFailedToAddNewDevice(
+      error instanceof Error ? error : unknownError()
+    );
     return renderManage(userNumber, connection);
   }
   const deviceName = await pickDeviceAlias();
@@ -241,8 +201,10 @@ const addAdditionalDevice = async (
         newDevice.rawId
       )
     );
-  } catch (error) {
-    await displayFailedToAddTheDevice(error);
+  } catch (error: unknown) {
+    await displayFailedToAddTheDevice(
+      error instanceof Error ? error : unknownError()
+    );
   }
   renderManage(userNumber, connection);
 };
@@ -356,12 +318,12 @@ const bindRemoveListener = (
         location.reload();
       }
       renderManage(userNumber, connection);
-    } catch (err) {
+    } catch (err: unknown) {
       await displayError({
         title: "Failed to remove the device",
         message:
           "An unexpected error occured when trying to remove the device. Please try again",
-        detail: err.toString(),
+        detail: unknownToString(err, "Unknown error"),
         primaryButton: "Back to Manage",
       });
       renderManage(userNumber, connection);
@@ -372,3 +334,7 @@ const bindRemoveListener = (
 // Whether or the user has registered a device as recovery
 const hasRecoveryDevice = (devices: DeviceData[]): boolean =>
   !devices.some((device) => hasOwnProperty(device.purpose, "recovery"));
+
+const unknownError = (): Error => {
+  return new Error("Unknown error");
+};
