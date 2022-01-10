@@ -50,9 +50,18 @@ export class RegisterView extends View {
     await this.browser
       .$("#confirmRegisterButton")
       .waitForDisplayed({ timeout: 25_000 });
+    await this.browser.$("#captchaInput").waitForDisplayed({ timeout: 25_000 });
   }
 
   async confirmRegisterConfirm(): Promise<void> {
+    await this.browser.$("#captchaInput").waitForEnabled({ timeout: 40_000 });
+    // In tests, the captchas are hard-coded to the following string: "a"
+    await this.browser.$("#captchaInput").setValue("a");
+    await this.browser
+      .$("#confirmRegisterButton")
+      // this is a huge timeout because generating the captcha takes a while on
+      // the emulator
+      .waitForEnabled({ timeout: 30_000 });
     await this.browser.$("#confirmRegisterButton").click();
   }
 
@@ -84,22 +93,33 @@ export class RegisterView extends View {
 export class SingleDeviceWarningView extends View {
   async waitForDisplay(): Promise<void> {
     await this.browser
-      .$("#displayWarningPrimary")
+      .$("#displayWarningAddRecovery")
       .waitForDisplayed({ timeout: 10_000 });
+    await this.browser
+      .$("#displayWarningRemindLater")
+      .waitForDisplayed({ timeout: 1_000 });
   }
 
-  async continue(): Promise<void> {
+  async addRecovery(): Promise<void> {
     // we need to scroll down in case of NOT headless, otherwise the button may not be visible
     await this.browser.execute(
       "window.scrollTo(0, document.body.scrollHeight)"
     );
-    await this.browser.$("#displayWarningPrimary").click();
+    await this.browser.$("#displayWarningAddRecovery").click();
+  }
+
+  async remindLater(): Promise<void> {
+    // we need to scroll down in case of NOT headless, otherwise the button may not be visible
+    await this.browser.execute(
+      "window.scrollTo(0, document.body.scrollHeight)"
+    );
+    await this.browser.$("#displayWarningRemindLater").click();
   }
 }
 
 export class RecoveryMethodSelectorView extends View {
   async waitForDisplay(): Promise<void> {
-    await this.browser.$("#skipRecovery").waitForDisplayed({ timeout: 3_000 });
+    await this.browser.$("#skipRecovery").waitForDisplayed({ timeout: 10_000 });
   }
 
   async useSeedPhrase(): Promise<void> {

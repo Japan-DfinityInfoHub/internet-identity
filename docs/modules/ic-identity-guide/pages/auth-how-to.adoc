@@ -7,6 +7,8 @@
 
 Internet Identity とは何か、ということから学びたい方は link:what-is-ic-identity{outfilesuffix}[Internet Identity とは？]をご覧ください。
 
+Internet Identity アンカーの作成やデバイスの管理を行いたい方は、link:https://identity.ic0.app[Internet Identity Page] をご覧ください。
+
 現在サポートされているすべての認証方法は、_WebAuthn_ 規格に準拠しています。ただし、以下のような制限があります:
 
 * OS Xでは、Safari を使った認証は、ブラウザのプロファイルとリンクしています。別のブラウザで Dapp を認証したい場合や、複数の Safari ブラウザのプロファイルを使用している場合は、認証方法と新しいブラウザの組み合わせを、新しいデバイスとして追加する必要があります。詳しくは <<デバイスの追加,`+デバイスの追加+`>> をご覧ください。
@@ -117,18 +119,11 @@ NOTE: Windows Hello 認証をサポートしている Windows デバイス上で
 
 . 使用したい Identity Anchor を入力し、"*Continue*" をクリックします。
 
-. 使用している携帯電話によって "*GET STARTED*" か "*Continue*" のどちらかが表示されますのでクリックします。
-
-. "*Use this device with screen lock*" を選択します。 
-+
-デバイスをアンロックするように促されます。
-+
-
-NOTE: 画面ロックを認証方法として使用する場合、携帯電話側でスクリーンロックを有効化しておく必要があります。
+. 画面の指示に従って、お使いの携帯電話のロック解除方法（FaceID、TouchIDなど）をInternet Identity で設定してください。
 
 . 携帯電話を認証します。
 +
-ロックを解除すると、URL と QR コードが表示されます。URLやQRコードは、すでに認証されているパソコンのブラウザで使用する必要があります。例えば、URL をコピーしてメールで自分のパソコンに送り、ブラウザに貼り付けるといった手順を踏んでください。
+お使いの携帯電話のロック解除方法を II で行うと、URL と QR コードが表示されます。URL や QR コードは、すでに認証されているパソコンのブラウザで使用する必要があります。例えば、URL をコピーしてメールで自分のパソコンに送り、ブラウザに貼り付けるといった手順を踏んでください。
 . コンピュータのブラウザで上記のリンクを開き、Identity Anchor を入力して、*Authenticate* をクリックし、既に登録されている認証方法を使って認証してください。
 . 携帯電話と Identity をリンクさせます。
 +
@@ -143,12 +138,26 @@ WARNING: デバイスを紛失して Dapps へのアクセスができなくな�
 
 WARNING: デバイスを紛失した場合は、攻撃者が認証方法を追加した可能性を考え、すぐにそのデバイスを認証方法から削除し、すべての認証方法が自分の管理下にあることを確認してください。また、デバイスを紛失してからそのデバイスを認証方法から外すまでの間、Identity Anchor が危険な状態であるということを認識してください。
 
-== 紛失した Identity の復旧
-Identity Anchor を作成する際には、暗号的に安全なシードフレーズをコピーするか、リカバリー方法として専用のセキュリティキーを追加するように画面上で促されます。
+== 紛失した Identity の復旧方法
+
+Identity Anchor を作成する際には、シードフレーズをコピーするか、リカバリー方法として専用のセキュリティキーを追加するように画面上で促されます。
 
 これらの作業はいつ行っても良いですが、Identity Anchor を紛失した場合や、認証済みのデバイスにアクセスできなくなった場合には、Identity Anchor を復元するためのシードフレーズかセキュリティキーが必要になりますのでご注意ください。これらがないと、関連する Identity を必要とするすべての Dapps からロックアウトされてしまいます。
 
-Identity Anchor にリカバリーフレーズやセキュリティキーを設定していれば、Internet Identity のトップページで "*Lost access and want to recover?*" をクリックすることで、そのアンカーへのアクセスを復旧することができます。
+Identity Anchor にリカバリーフレーズやセキュリティキーを設定していれば、以下のステップによってアクセスを復旧することができます。
+
+**1. Internet Identity のランディングページから、 *Lost access and want to recover?* をクリックします。**
+
+image::auth-how-to/welcome-to-internet-identity.png[]
+
+**2. Identity アンカーを入力します。**
+
+image::auth-how-to/recover-identity-anchor.png[]
+
+**3. シードフレーズを入力します。**
+
+image::auth-how-to/your-seed-phrase.png[]
+
 ////
 = How to use Internet Identity
 :keywords: Internet Computer,blockchain,protocol,replica,subnet,data center,canister,developer
@@ -160,6 +169,8 @@ Identity Anchor にリカバリーフレーズやセキュリティキーを設�
 
 If you would like to learn what Internet Identity is, see
 link:https://sdk.dfinity.org/docs/ic-identity-guide/what-is-ic-identity.html[What is Internet Identity?]
+
+If you would like to create an Internet Identity anchor, or manage your devices, go to the link:https://identity.ic0.app[Internet Identity Page].
 
 All currently supported authentication methods follow the _WebAuthn_ standard. The following restrictions apply, however:
 
@@ -258,18 +269,11 @@ Other workflows can be more complex. For example, to add your phone's unlock met
 
 . Enter the Identity Anchor you'd like to use and and click *Continue*.
 
-. Click *GET STARTED*, or *Continue*, depending on the phone you are using.
-
-. Select *Use this device with screen lock*. 
-+
-You will be asked to unlock the device. 
-+
-
-NOTE: To use the screen lock option, you have to have screen lock activated on your phone. 
+. Follow the instructions on screen for setting up your phone's unlock method (FaceID, TouchID, etc) with Internet Identity.
 
 . Authorize your phone.
 +
-After you’ve unlocked your phone, you will be provided with a URL and a QR code. You must use the URL or QR code in a browser in the computer that has already been authorized. For example, you can copy the URL and email it to yourself, then paste it into a browser on the computer. 
+After you’ve set up the unlock method with II on your phone, you will be provided with a URL and a QR code. You must use the URL or QR code in a browser in the computer that has already been authorized. For example, you can copy the URL and email it to yourself, then paste it into a browser on the computer. 
 . In the browser on the computer that has already been authorized, open the above link, enter your Identity Anchor, click *Authenticate* and authenticate using an existing authentication method.
 . Link your phone to your identity. 
 +
@@ -284,10 +288,24 @@ WARNING: You should add as many devices as possible to prevent you from losing a
 
 WARNING: If you lose a device, remove it from the authentication methods immediately and make sure that all added authentication methods are in your control, as an attacker may have added more methods in the meanwhile. Also, consider the Identity Anchor compromised starting from the time the device was lost until it was removed from the authentication methods.
 
-== Recover a lost identity
-When you create an Identity Anchor, you will be prompted to copy a cryptographically-secure seed phrase or to add a dedicated security key as recovery mechanism.
+== How to recover a lost identity
+
+When you create an Identity Anchor, you will be prompted to copy a seed phrase or to add a dedicated security key as recovery mechanism.
 
 You can choose to do this at any time, but note that if you lose an Identity Anchor or if you no longer have access to authorized devices, you will need the seed phrase or the recovery security key to recover the Identity Anchor. Without one of these, you will be locked out of any dapps that require the associated identity.
 
-If you have set up a recovery phrase or recovery security key for an Identity Anchor, you can regain access to it by clicking *Lost access and want to recover?* from the Internet Identity landing page.
+If you have set up a recovery phrase or recovery security key for an Identity Anchor, you can regain access by following these steps: 
+
+**1. Click *Lost access and want to recover?* from the Internet Identity landing page.**
+
+image::auth-how-to/welcome-to-internet-identity.png[]
+
+**2. Input your identity anchor**
+
+image::auth-how-to/recover-identity-anchor.png[]
+
+**3. Input your seed phrase**
+
+image::auth-how-to/your-seed-phrase.png[]
+
 ////
