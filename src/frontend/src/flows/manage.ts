@@ -1,14 +1,13 @@
 import { render, html } from "lit-html";
-import { creationOptions, IIConnection } from "../utils/iiConnection";
 import {
-  derBlobFromBlob,
-  blobFromUint8Array,
-  DerEncodedBlob,
-} from "@dfinity/candid";
+  bufferEqual,
+  creationOptions,
+  IIConnection,
+} from "../utils/iiConnection";
 import { withLoader } from "../components/loader";
 import { initLogout, logoutSection } from "../components/logout";
-import { aboutLink } from "../components/aboutLink";
-import { faqLink } from "../components/faqLink";
+import { navbar } from "../components/navbar";
+import { footer } from "../components/footer";
 import { DeviceData, PublicKey } from "../../generated/internet_identity_types";
 import { closeIcon, warningIcon } from "../components/icons";
 import { displayError } from "../components/displayError";
@@ -16,6 +15,7 @@ import { pickDeviceAlias } from "./addDevicePickAlias";
 import { WebAuthnIdentity } from "@dfinity/identity";
 import { setupRecovery } from "./recovery/setupRecovery";
 import { hasOwnProperty, unknownToString } from "../utils/utils";
+import { DerEncodedPublicKey } from "@dfinity/agent";
 
 // The various error messages we may display
 
@@ -93,10 +93,8 @@ const style = () => html`<style>
 // that they add a recovery device. If the user _does_ have at least one
 // recovery device, then we do not display a "nag box", but we list the
 // recovery devices.
-const pageContent = (
-  userNumber: bigint,
-  devices: DeviceData[]
-) => html` ${style()}
+const pageContent = (userNumber: bigint, devices: DeviceData[]) => html`
+  ${style()}
   <div class="container">
     <h1>Anchor Management</h1>
     <p>
@@ -123,9 +121,10 @@ const pageContent = (
           </div>
           <div id="recoveryList"></div>
         `}
-    ${logoutSection()}
+    ${logoutSection()} ${navbar}
   </div>
-  <div id="navbar">${aboutLink} &middot; ${faqLink}</div>`;
+  ${footer}
+`;
 
 const deviceListItem = (alias: string) => html`
   <div class="deviceItemAlias">${alias}</div>
@@ -289,13 +288,12 @@ const bindRemoveListener = (
 ) => {
   const button = listItem.querySelector("button") as HTMLButtonElement;
   button.onclick = async () => {
-    const pubKey: DerEncodedBlob = derBlobFromBlob(
-      blobFromUint8Array(new Uint8Array(publicKey))
+    const pubKey: DerEncodedPublicKey = new Uint8Array(publicKey)
+      .buffer as DerEncodedPublicKey;
+    const sameDevice = bufferEqual(
+      connection.identity.getPublicKey().toDer(),
+      pubKey
     );
-    const sameDevice = connection.identity
-      .getPublicKey()
-      .toDer()
-      .equals(pubKey);
 
     if (isOnlyDevice) {
       return alert("You can not remove your last device.");

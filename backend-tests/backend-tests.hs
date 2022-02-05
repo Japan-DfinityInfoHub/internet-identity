@@ -437,7 +437,7 @@ validateSecurityHeaders resp = do
     \window-placement=(),\
     \xr-spatial-tracking=()"
   validateHeaderMatches resp "Content-Security-Policy" "^default-src 'none';\
-    \connect-src 'self';\
+    \connect-src 'self' https://ic0.app;\
     \img-src 'self' data:;\
     \script-src 'sha256-[a-zA-Z0-9\\/=+]+' 'unsafe-inline' 'unsafe-eval' 'strict-dynamic' https:;\
     \base-uri 'none';\
@@ -747,7 +747,7 @@ tests wasm_file = testGroup "Tests" $ upgradeGroups $
       r <- queryII cid dummyUserId #http_request (httpGet asset)
       validateHttpResponse cid asset r
       validateSecurityHeaders r
-    | asset <- words "/ /index.html /index.js /loader.webp /favicon.ico /does-not-exist"
+    | asset <- words "/ /index.html /index.js /loader.webp /favicon.ico /ic-badge.svg /does-not-exist"
     ]
 
   , withUpgrade $ \should_upgrade -> testCase "upgrade from stable memory backup" $ withIC $ do

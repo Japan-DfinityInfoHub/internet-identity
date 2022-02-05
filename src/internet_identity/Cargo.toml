@@ -11,6 +11,7 @@ ic-cdk = "0.3.2"
 ic-cdk-macros = "0.3"
 ic-certified-map = "0.3.0"
 ic-types = "0.1.1"
+lazy_static = "1.4.0"
 serde = "1"
 serde_bytes = "0.11"
 serde_cbor = "0.11"
@@ -25,9 +26,6 @@ captcha = { git = 'https://github.com/nmattia/captcha', rev = '4751b6fa4e56229c2
 [dev-dependencies]
 hex-literal = "0.2.1"
 rand = "0.8.3"
-
-[build-dependencies]
-sha2 = "0.9.1"
 
 [features]
 # the dummy_captcha feature which ensures the captcha string is always "a"

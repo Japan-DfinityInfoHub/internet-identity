@@ -2,9 +2,6 @@ name: e2e tests
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
 
 jobs:
   tests:
@@ -17,7 +14,9 @@ jobs:
       fail-fast: false
     env:
       DFX_VERSION: 0.8.3
-      RUSTC_VERSION: 1.51.0
+      RUSTC_VERSION: 1.58.1
+      REPLICA_URL: https://ic0.app
+      II_ORIGIN: https://identity.ic0.app
 
     steps:
       - uses: actions/checkout@v2
@@ -28,7 +27,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-selenium-${{ hashFiles('**/Cargo.lock') }}-1
+          key: ${{ runner.os }}-cargo-${{ env.RUSTC_VERSION }}-selenium-${{ hashFiles('**/Cargo.lock') }}-1
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v2
@@ -61,7 +60,17 @@ jobs:
           rustc --version
           echo cargo --version
           cargo --version
+          echo docker --version
+          docker --version
 
+      # needed so that we can run the test on identity.ic0.app
+      - name: Add hosts to /etc/hosts
+        run: |
+          sudo echo "127.0.0.1 identity.ic0.app" | sudo tee -a /etc/hosts
+          sudo echo "127.0.0.1 ic0.app" | sudo tee -a /etc/hosts
+
+      - run: docker build reverse_proxy -t ii_proxy
+      - run: docker run --add-host host.docker.internal:host-gateway -d -p 443:443 ii_proxy
       - run: npm ci
       - run: dfx start ${{ matrix.start-flag }} --background
 
@@ -99,6 +108,10 @@ jobs:
       - run: npm test
       - run: npm run test:e2e-${{ matrix.device }}
       - run: dfx stop
+
+      - name: Print docker logs
+        if: ${{ always() }}
+        run: docker logs $(docker ps -qf "ancestor=ii_proxy")
 
       - name: Archive test logs
         if: ${{ always() }}

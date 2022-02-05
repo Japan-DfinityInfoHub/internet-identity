@@ -11,8 +11,7 @@ can validate that we really deploy what we claim to deploy.
 We try to achieve some level of reproducibility using a Dockerized build
 environment. The following steps _should_ build the official Wasm image
 
-    docker build -t internet-identity-service .
-    docker run --rm --entrypoint cat internet-identity-service /internet_identity.wasm > internet_identity.wasm
+    ./scripts/docker-build
     sha256sum internet_identity.wasm
 
 The resulting `internet_identity.wasm` is ready for deployment as
@@ -85,11 +84,6 @@ Then open `http://localhost:8080` in your browser. Webpack will reload the page 
 
 ```bash
 npm run format && npm run lint
-```
-
-To customize your canister ID for deployment or particular local development, create a [`.env`](https://www.npmjs.com/package/dotenv) file in the root of the project and add a `CANISTER_ID` attribute. It should look something like
-```
-CANISTER_ID=rrkah-fqaaa-aaaaa-aaaaq-cai
 ```
 
 Finally, to test workflows like authentication from a client application, you start the sample app:

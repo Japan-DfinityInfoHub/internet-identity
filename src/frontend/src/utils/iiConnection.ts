@@ -1,10 +1,10 @@
-import { Actor, ActorSubclass, HttpAgent, SignIdentity } from "@dfinity/agent";
 import {
-  BinaryBlob,
-  blobFromUint8Array,
-  derBlobFromBlob,
-  DerEncodedBlob,
-} from "@dfinity/candid";
+  Actor,
+  ActorSubclass,
+  DerEncodedPublicKey,
+  HttpAgent,
+  SignIdentity,
+} from "@dfinity/agent";
 import { idlFactory as internet_identity_idl } from "../../generated/internet_identity_idl";
 import {
   _SERVICE,
@@ -34,10 +34,23 @@ import { Principal } from "@dfinity/principal";
 import { MultiWebAuthnIdentity } from "./multiWebAuthnIdentity";
 import { hasOwnProperty } from "./utils";
 import * as tweetnacl from "tweetnacl";
+import { displayError } from "../components/displayError";
 import { fromMnemonicWithoutValidation } from "../crypto/ed25519";
 
-// eslint-disable-next-line
-const canisterId: string = process.env.CANISTER_ID!;
+declare const canisterId: string;
+
+// Check if the canister ID was defined before we even try to read it
+if (typeof canisterId !== undefined) {
+  displayError({
+    title: "Canister ID not set",
+    message:
+      "There was a problem contacting the IC. The host serving this page did not give us a canister ID. Try reloading the page and contact support if the problem persists.",
+    primaryButton: "Reload",
+  }).then(() => {
+    window.location.reload();
+  });
+}
+
 export const canisterIdPrincipal: Principal = Principal.fromText(canisterId);
 export const baseActor = Actor.createActor<_SERVICE>(internet_identity_idl, {
   agent: new HttpAgent({}),
@@ -102,8 +115,8 @@ export class IIConnection {
     }
 
     const actor = await IIConnection.createActor(delegationIdentity);
-    const credential_id = Array.from(identity.rawId);
-    const pubkey = Array.from(identity.getPublicKey().toDer());
+    const credential_id = Array.from(new Uint8Array(identity.rawId));
+    const pubkey = Array.from(new Uint8Array(identity.getPublicKey().toDer()));
 
     let registerResponse: RegisterResponse;
     try {
@@ -176,7 +189,7 @@ export class IIConnection {
       devices.flatMap((device) =>
         device.credential_id.map((credentialId: CredentialId) => ({
           pubkey: derFromPubkey(device.pubkey),
-          credentialId: blobFromUint8Array(Buffer.from(credentialId)),
+          credentialId: Buffer.from(credentialId),
         }))
       )
     );
@@ -218,7 +231,10 @@ export class IIConnection {
       IC_DERIVATION_PATH
     );
     if (
-      !identity.getPublicKey().toDer().equals(derFromPubkey(expected.pubkey))
+      !bufferEqual(
+        identity.getPublicKey().toDer(),
+        derFromPubkey(expected.pubkey)
+      )
     ) {
       return {
         kind: "seedPhraseFail",
@@ -305,14 +321,16 @@ export class IIConnection {
     alias: string,
     keyType: KeyType,
     purpose: Purpose,
-    newPublicKey: DerEncodedBlob,
-    credentialId?: BinaryBlob
+    newPublicKey: DerEncodedPublicKey,
+    credentialId?: ArrayBuffer
   ): Promise<void> => {
     const actor = await this.getActor();
     return await actor.add(userNumber, {
       alias,
-      pubkey: Array.from(newPublicKey),
-      credential_id: credentialId ? [Array.from(credentialId)] : [],
+      pubkey: Array.from(new Uint8Array(newPublicKey)),
+      credential_id: credentialId
+        ? [Array.from(new Uint8Array(credentialId))]
+        : [],
       key_type: keyType,
       purpose,
     });
@@ -446,5 +464,15 @@ export const creationOptions = (
   };
 };
 
-const derFromPubkey = (pubkey: DeviceKey): DerEncodedBlob =>
-  derBlobFromBlob(blobFromUint8Array(Buffer.from(pubkey)));
+const derFromPubkey = (pubkey: DeviceKey): DerEncodedPublicKey =>
+  new Uint8Array(pubkey).buffer as DerEncodedPublicKey;
+
+export const bufferEqual = (buf1: ArrayBuffer, buf2: ArrayBuffer): boolean => {
+  if (buf1.byteLength != buf2.byteLength) return false;
+  const dv1 = new Int8Array(buf1);
+  const dv2 = new Int8Array(buf2);
+  for (let i = 0; i != buf1.byteLength; i++) {
+    if (dv1[i] != dv2[i]) return false;
+  }
+  return true;
+};
