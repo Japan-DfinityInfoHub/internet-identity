@@ -1,4 +1,14 @@
 import type { Principal } from '@dfinity/principal';
+export type AddTentativeDeviceResponse = {
+    'device_registration_mode_off' : null
+  } |
+  { 'another_device_tentatively_added' : null } |
+  {
+    'added_tentatively' : {
+      'verification_code' : string,
+      'device_registration_timeout' : Timestamp,
+    }
+  };
 export interface Challenge {
   'png_base64' : string,
   'challenge_key' : ChallengeKey,
@@ -19,6 +29,10 @@ export interface DeviceData {
   'credential_id' : [] | [CredentialId],
 }
 export type DeviceKey = PublicKey;
+export interface DeviceRegistrationInfo {
+  'tentative_device' : [] | [DeviceData],
+  'expiration' : Timestamp,
+}
 export type FrontendHostname = string;
 export type GetDelegationResponse = { 'no_such_delegation' : null } |
   { 'signed_delegation' : SignedDelegation };
@@ -35,6 +49,10 @@ export interface HttpResponse {
   'streaming_strategy' : [] | [StreamingStrategy],
   'status_code' : number,
 }
+export interface IdentityAnchorInfo {
+  'devices' : Array<DeviceData>,
+  'device_registration' : [] | [DeviceRegistrationInfo],
+}
 export interface InternetIdentityInit {
   'assigned_user_number_range' : [bigint, bigint],
 }
@@ -46,7 +64,6 @@ export type KeyType = { 'platform' : null } |
   { 'seed_phrase' : null } |
   { 'cross_platform' : null } |
   { 'unknown' : null };
-export interface ProofOfWork { 'nonce' : bigint, 'timestamp' : Timestamp }
 export type PublicKey = Array<number>;
 export type Purpose = { 'authentication' : null } |
   { 'recovery' : null };
@@ -69,9 +86,21 @@ export type Timestamp = bigint;
 export type Token = {};
 export type UserKey = PublicKey;
 export type UserNumber = bigint;
+export type VerifyTentativeDeviceResponse = {
+    'device_registration_mode_off' : null
+  } |
+  { 'verified' : null } |
+  { 'wrong_code' : { 'retries_left' : number } } |
+  { 'no_device_to_verify' : null };
 export interface _SERVICE {
   'add' : (arg_0: UserNumber, arg_1: DeviceData) => Promise<undefined>,
-  'create_challenge' : (arg_0: ProofOfWork) => Promise<Challenge>,
+  'add_tentative_device' : (arg_0: UserNumber, arg_1: DeviceData) => Promise<
+      AddTentativeDeviceResponse
+    >,
+  'create_challenge' : () => Promise<Challenge>,
+  'enter_device_registration_mode' : (arg_0: UserNumber) => Promise<Timestamp>,
+  'exit_device_registration_mode' : (arg_0: UserNumber) => Promise<undefined>,
+  'get_anchor_info' : (arg_0: UserNumber) => Promise<IdentityAnchorInfo>,
   'get_delegation' : (
       arg_0: UserNumber,
       arg_1: FrontendHostname,
@@ -95,4 +124,7 @@ export interface _SERVICE {
     >,
   'remove' : (arg_0: UserNumber, arg_1: DeviceKey) => Promise<undefined>,
   'stats' : () => Promise<InternetIdentityStats>,
+  'verify_tentative_device' : (arg_0: UserNumber, arg_1: string) => Promise<
+      VerifyTentativeDeviceResponse
+    >,
 }

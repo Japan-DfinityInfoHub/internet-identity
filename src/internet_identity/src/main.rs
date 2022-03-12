@@ -1,24 +1,25 @@
+use crate::assets::init_assets;
+use crate::http::{HeaderField, HttpRequest, HttpResponse};
+use crate::AddTentativeDeviceResponse::{AddedTentatively, AnotherDeviceTentativelyAdded};
+use crate::RegistrationState::{DeviceRegistrationModeActive, DeviceTentativelyAdded};
+use crate::VerifyTentativeDeviceResponse::{NoDeviceToVerify, WrongCode};
 use assets::ContentType;
 use ic_cdk::api::call::call;
-use ic_cdk::api::stable::stable64_size;
 use ic_cdk::api::{caller, data_certificate, id, set_certified_data, time, trap};
-use ic_cdk::export::candid::{CandidType, Deserialize, Func, Principal};
+use ic_cdk::export::candid::{CandidType, Deserialize, Principal};
 use ic_cdk_macros::{init, post_upgrade, query, update};
 use ic_certified_map::{AsHashTree, Hash, HashTree, RbTree};
-use internet_identity::metrics_encoder::MetricsEncoder;
-use internet_identity::nonce_cache::NonceCache;
 use internet_identity::signature_map::SignatureMap;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use serde::Serialize;
-use serde_bytes::{ByteBuf, Bytes};
-use sha2::Digest;
-use std::borrow::Cow;
+use serde_bytes::ByteBuf;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use storage::{Salt, Storage};
 
 mod assets;
+mod http;
 
 const fn secs_to_nanos(secs: u64) -> u64 {
     secs * 1_000_000_000
@@ -33,13 +34,18 @@ const DEFAULT_EXPIRATION_PERIOD_NS: u64 = secs_to_nanos(30 * 60);
 const MAX_EXPIRATION_PERIOD_NS: u64 = secs_to_nanos(8 * 24 * 60 * 60);
 // 1 min
 const DEFAULT_SIGNATURE_EXPIRATION_PERIOD_NS: u64 = secs_to_nanos(60);
-// 5 mins
-const POW_NONCE_LIFETIME: u64 = secs_to_nanos(300);
+
 // 5 mins
 const CAPTCHA_CHALLENGE_LIFETIME: u64 = secs_to_nanos(300);
-
 // How many captcha challenges we keep in memory (at most)
 const MAX_INFLIGHT_CHALLENGES: usize = 500;
+
+// 15 mins
+const REGISTRATION_MODE_DURATION: u64 = secs_to_nanos(900);
+// How many users can be in registration mode simultaneously
+const MAX_USERS_IN_REGISTRATION_MODE: usize = 10_000;
+// How many verification attempts are given for a tentative device
+const MAX_DEVICE_REGISTRATION_ATTEMPTS: u8 = 3;
 
 const LABEL_ASSETS: &[u8] = b"http_assets";
 const LABEL_SIG: &[u8] = b"sig";
@@ -53,6 +59,8 @@ type SessionKey = PublicKey;
 type FrontendHostname = String;
 type Timestamp = u64; // in nanos since epoch
 type Signature = ByteBuf;
+type DeviceVerificationCode = String;
+type FailedAttemptsCounter = u8;
 
 struct Base64(String);
 
@@ -124,12 +132,6 @@ impl From<DeviceDataInternal> for DeviceData {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct ProofOfWork {
-    timestamp: Timestamp,
-    nonce: u64,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
 struct Delegation {
     pubkey: PublicKey,
     expiration: Timestamp,
@@ -160,40 +162,45 @@ enum RegisterResponse {
     BadChallenge,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum AddTentativeDeviceResponse {
+    #[serde(rename = "added_tentatively")]
+    AddedTentatively {
+        verification_code: DeviceVerificationCode,
+        device_registration_timeout: Timestamp,
+    },
+    #[serde(rename = "device_registration_mode_off")]
+    DeviceRegistrationModeOff,
+    #[serde(rename = "another_device_tentatively_added")]
+    AnotherDeviceTentativelyAdded,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum VerifyTentativeDeviceResponse {
+    #[serde(rename = "verified")]
+    Verified,
+    #[serde(rename = "wrong_code")]
+    WrongCode { retries_left: u8 },
+    #[serde(rename = "device_registration_mode_off")]
+    DeviceRegistrationModeOff,
+    #[serde(rename = "no_device_to_verify")]
+    NoDeviceToVerify,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct DeviceRegistrationInfo {
+    expiration: Timestamp,
+    tentative_device: Option<DeviceData>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct IdentityAnchorInfo {
+    devices: Vec<DeviceData>,
+    device_registration: Option<DeviceRegistrationInfo>,
+}
+
 mod hash;
 mod storage;
-
-type HeaderField = (String, String);
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct HttpRequest {
-    method: String,
-    url: String,
-    headers: Vec<(String, String)>,
-    body: ByteBuf,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct HttpResponse {
-    status_code: u16,
-    headers: Vec<HeaderField>,
-    body: Cow<'static, Bytes>,
-    streaming_strategy: Option<StreamingStrategy>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct Token {}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum StreamingStrategy {
-    Callback { callback: Func, token: Token },
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct StreamingCallbackHttpResponse {
-    body: ByteBuf,
-    token: Option<Token>,
-}
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct InternetIdentityStats {
@@ -208,8 +215,22 @@ struct InternetIdentityInit {
 
 type AssetHashes = RbTree<&'static str, Hash>;
 
+struct TentativeDeviceRegistration {
+    expiration: Timestamp,
+    state: RegistrationState,
+}
+
+/// Registration state of new devices added using the two step device add flow
+enum RegistrationState {
+    DeviceRegistrationModeActive,
+    DeviceTentativelyAdded {
+        tentative_device: DeviceData,
+        verification_code: DeviceVerificationCode,
+        failed_attempts: FailedAttemptsCounter,
+    },
+}
+
 struct State {
-    nonce_cache: RefCell<NonceCache>,
     storage: RefCell<Storage<Vec<DeviceDataInternal>>>,
     sigs: RefCell<SignatureMap>,
     asset_hashes: RefCell<AssetHashes>,
@@ -217,13 +238,15 @@ struct State {
     // note: we COULD persist this through upgrades, although this is currently NOT persisted
     // through upgrades
     inflight_challenges: RefCell<HashMap<ChallengeKey, ChallengeInfo>>,
+    // tentative device registrations, not persisted across updates
+    // if a user number is present in this map then registration mode is active until expiration
+    tentative_device_registrations: RefCell<HashMap<UserNumber, TentativeDeviceRegistration>>,
 }
 
 impl Default for State {
     fn default() -> Self {
         const FIRST_USER_ID: UserNumber = 10_000;
         Self {
-            nonce_cache: RefCell::new(NonceCache::default()),
             storage: RefCell::new(Storage::new((
                 FIRST_USER_ID,
                 FIRST_USER_ID.saturating_add(storage::DEFAULT_RANGE_SIZE),
@@ -232,18 +255,7 @@ impl Default for State {
             asset_hashes: RefCell::new(AssetHashes::default()),
             last_upgrade_timestamp: Cell::new(0),
             inflight_challenges: RefCell::new(HashMap::new()),
-        }
-    }
-}
-
-impl ContentType {
-    fn to_mime_type_string(&self) -> String {
-        match self {
-            ContentType::HTML => "text/html".to_string(),
-            ContentType::JS => "text/javascript".to_string(),
-            ContentType::ICO => "image/vnd.microsoft.icon".to_string(),
-            ContentType::WEBP => "image/webp".to_string(),
-            ContentType::SVG => "image/svg+xml".to_string(),
+            tentative_device_registrations: RefCell::new(HashMap::new()),
         }
     }
 }
@@ -298,6 +310,202 @@ async fn init_salt() {
         let mut store = s.storage.borrow_mut();
         store.update_salt(salt); // update_salt() traps if salt has already been set
     });
+}
+
+/// Enables device registration mode for the given user and returns the expiration timestamp (when it will be disabled again).
+/// If the device registration mode is already active it will just return the expiration timestamp again.
+#[update]
+fn enter_device_registration_mode(user_number: UserNumber) -> Timestamp {
+    STATE.with(|state| {
+        let entries = state
+            .storage
+            .borrow()
+            .read(user_number)
+            .unwrap_or_else(|err| {
+                trap(&format!(
+                    "failed to read device data of user {}: {}",
+                    user_number, err
+                ))
+            });
+        trap_if_not_authenticated(entries.iter().map(|e| &e.pubkey));
+
+        prune_expired_tentative_device_registrations(state);
+        if state.tentative_device_registrations.borrow().len() >= MAX_USERS_IN_REGISTRATION_MODE {
+            trap("too many users in device registration mode");
+        }
+
+        let mut device_registration_state = state.tentative_device_registrations.borrow_mut();
+        match device_registration_state.get(&user_number) {
+            Some(TentativeDeviceRegistration { expiration, .. }) => *expiration, // already enabled, just return the existing expiration
+            None => {
+                let expiration = time() + REGISTRATION_MODE_DURATION;
+                device_registration_state.insert(
+                    user_number,
+                    TentativeDeviceRegistration {
+                        expiration,
+                        state: DeviceRegistrationModeActive,
+                    },
+                );
+                expiration
+            }
+        }
+    })
+}
+
+#[update]
+fn exit_device_registration_mode(user_number: UserNumber) {
+    STATE.with(|state| {
+        let entries = state
+            .storage
+            .borrow()
+            .read(user_number)
+            .unwrap_or_else(|err| {
+                trap(&format!(
+                    "failed to read device data of user {}: {}",
+                    user_number, err
+                ))
+            });
+        trap_if_not_authenticated(entries.iter().map(|e| &e.pubkey));
+
+        prune_expired_tentative_device_registrations(state);
+
+        state
+            .tentative_device_registrations
+            .borrow_mut()
+            .remove(&user_number);
+    })
+}
+
+#[update]
+async fn add_tentative_device(
+    user_number: UserNumber,
+    device_data: DeviceData,
+) -> AddTentativeDeviceResponse {
+    let verification_code = new_verification_code().await;
+    let now = time();
+
+    STATE.with(|state| {
+        prune_expired_tentative_device_registrations(state);
+
+        let mut tentative_registrations = state.tentative_device_registrations.borrow_mut();
+        let registration = tentative_registrations.get_mut(&user_number);
+
+        match registration {
+            None => AddTentativeDeviceResponse::DeviceRegistrationModeOff,
+            Some(TentativeDeviceRegistration { expiration, .. }) if *expiration <= now => {
+                AddTentativeDeviceResponse::DeviceRegistrationModeOff
+            }
+            Some(TentativeDeviceRegistration {
+                state: DeviceTentativelyAdded { .. },
+                ..
+            }) => AnotherDeviceTentativelyAdded,
+            Some(mut registration) => {
+                registration.state = DeviceTentativelyAdded {
+                    tentative_device: device_data,
+                    failed_attempts: 0,
+                    verification_code: verification_code.clone(),
+                };
+                AddedTentatively {
+                    device_registration_timeout: registration.expiration,
+                    verification_code,
+                }
+            }
+        }
+    })
+}
+
+#[update]
+async fn verify_tentative_device(
+    user_number: UserNumber,
+    user_verification_code: DeviceVerificationCode,
+) -> VerifyTentativeDeviceResponse {
+    match get_verified_device(user_number, user_verification_code) {
+        Ok(device) => {
+            add(user_number, device).await;
+            VerifyTentativeDeviceResponse::Verified
+        }
+        Err(err) => err,
+    }
+}
+
+/// Checks the device verification code for a tentative device.
+/// If valid, returns the device to be added and exits device registration mode
+/// If invalid, returns the appropriate error to send to the client and increases failed attempts. Exits device registration mode if there are no retries left.
+fn get_verified_device(
+    user_number: UserNumber,
+    user_verification_code: DeviceVerificationCode,
+) -> Result<DeviceData, VerifyTentativeDeviceResponse> {
+    STATE.with(|s| {
+        let entries = s.storage.borrow().read(user_number).unwrap_or_else(|err| {
+            trap(&format!(
+                "failed to read device data of user {}: {}",
+                user_number, err
+            ))
+        });
+        trap_if_not_authenticated(entries.iter().map(|e| &e.pubkey));
+
+        prune_expired_tentative_device_registrations(s);
+
+        let mut device_registration_state = s.tentative_device_registrations.borrow_mut();
+        let mut tentative_registration = device_registration_state
+            .remove(&user_number)
+            .ok_or(VerifyTentativeDeviceResponse::DeviceRegistrationModeOff)?;
+
+        match tentative_registration.state {
+            DeviceRegistrationModeActive => Err(NoDeviceToVerify),
+            DeviceTentativelyAdded {
+                failed_attempts,
+                verification_code,
+                tentative_device,
+            } => {
+                if user_verification_code == verification_code {
+                    return Ok(tentative_device);
+                }
+
+                let failed_attempts = failed_attempts + 1;
+                if failed_attempts < MAX_DEVICE_REGISTRATION_ATTEMPTS {
+                    tentative_registration.state = DeviceTentativelyAdded {
+                        failed_attempts,
+                        tentative_device,
+                        verification_code,
+                    };
+                    // reinsert because retries are allowed
+                    device_registration_state.insert(user_number, tentative_registration);
+                }
+                return Err(WrongCode {
+                    retries_left: (MAX_DEVICE_REGISTRATION_ATTEMPTS - failed_attempts),
+                });
+            }
+        }
+    })
+}
+
+/// Return a decimal representation of a random `u32` to be used as verification code
+async fn new_verification_code() -> DeviceVerificationCode {
+    let res: Vec<u8> = match call(Principal::management_canister(), "raw_rand", ()).await {
+        Ok((res,)) => res,
+        Err((_, err)) => trap(&format!("failed to get randomness: {}", err)),
+    };
+    let rand = u32::from_be_bytes(res[..4].try_into().unwrap_or_else(|_| {
+        trap(&format!(
+            "when creating device verification code from raw_rand output, expected raw randomness to be of length 32, got {}",
+            res.len()
+        ));
+    }));
+
+    // the format! makes sure that the resulting string has exactly 6 characters.
+    format!("{:06}", (rand % 1_000_000))
+}
+
+/// Removes __all__ expired device registrations -> there is no need to check expiration immediately after pruning.
+fn prune_expired_tentative_device_registrations(state: &State) {
+    let now = time();
+    state
+        .tentative_device_registrations
+        .borrow_mut()
+        .retain(|_, value| match &value {
+            TentativeDeviceRegistration { expiration, .. } => expiration > &now,
+        });
 }
 
 #[update]
@@ -414,28 +622,15 @@ async fn remove(user_number: UserNumber, device_key: DeviceKey) {
 }
 
 #[update]
-async fn create_challenge(pow: ProofOfWork) -> Challenge {
+async fn create_challenge() -> Challenge {
     let mut rng = make_rng().await;
 
     let resp = STATE.with(|s| {
-        let mut nonce_cache = s.nonce_cache.borrow_mut();
-        if nonce_cache.contains(pow.timestamp, pow.nonce) {
-            trap(&format!(
-                "the combination of timestamp {} and nonce {} has already been used",
-                pow.timestamp, pow.nonce,
-            ));
-        }
-
-        let now = time() as u64;
-
-        nonce_cache.prune_expired(now.saturating_sub(POW_NONCE_LIFETIME));
         prune_expired_signatures(&s.asset_hashes.borrow(), &mut s.sigs.borrow_mut());
 
-        check_proof_of_work(&pow, now);
-
-        nonce_cache.add(pow.timestamp, pow.nonce);
-
         let mut inflight_challenges = s.inflight_challenges.borrow_mut();
+
+        let now = time() as u64;
 
         // Prune old challenges. This drops all challenges that are older than
         // CAPTCHA_CHALLENGE_LIFETIME
@@ -527,7 +722,7 @@ async fn make_rng() -> rand_chacha::ChaCha20Rng {
 #[cfg(feature = "dummy_captcha")]
 fn create_captcha<T: RngCore>(rng: T) -> (Base64, String) {
     let mut captcha = captcha::RngCaptcha::from_rng(rng);
-    let captcha = captcha.set_chars(&vec!['a']).add_chars(1).view(10, 10);
+    let captcha = captcha.set_chars(&vec!['a']).add_chars(1).view(96, 48);
 
     let resp = match captcha.as_base64() {
         Some(png_base64) => Base64(png_base64),
@@ -580,6 +775,58 @@ fn lookup(user_number: UserNumber) -> Vec<DeviceData> {
             .into_iter()
             .map(DeviceData::from)
             .collect()
+    })
+}
+
+#[update] // this is an update call because queries are not (yet) certified
+fn get_anchor_info(user_number: UserNumber) -> IdentityAnchorInfo {
+    STATE.with(|state| {
+        let entries = state
+            .storage
+            .borrow()
+            .read(user_number)
+            .unwrap_or_else(|err| {
+                trap(&format!(
+                    "failed to read device data of user {}: {}",
+                    user_number, err
+                ))
+            });
+        trap_if_not_authenticated(entries.iter().map(|e| &e.pubkey));
+
+        let devices = entries.into_iter().map(DeviceData::from).collect();
+        let now = time();
+        match state
+            .tentative_device_registrations
+            .borrow()
+            .get(&user_number)
+        {
+            Some(TentativeDeviceRegistration {
+                expiration,
+                state:
+                    DeviceTentativelyAdded {
+                        tentative_device, ..
+                    },
+            }) if *expiration > now => IdentityAnchorInfo {
+                devices,
+                device_registration: Some(DeviceRegistrationInfo {
+                    expiration: *expiration,
+                    tentative_device: Some(tentative_device.clone()),
+                }),
+            },
+            Some(TentativeDeviceRegistration { expiration, .. }) if *expiration > now => {
+                IdentityAnchorInfo {
+                    devices,
+                    device_registration: Some(DeviceRegistrationInfo {
+                        expiration: *expiration,
+                        tentative_device: None,
+                    }),
+                }
+            }
+            None | Some(_) => IdentityAnchorInfo {
+                devices,
+                device_registration: None,
+            },
+        }
     })
 }
 
@@ -698,215 +945,9 @@ fn get_delegation(
     })
 }
 
-fn encode_metrics(w: &mut MetricsEncoder<Vec<u8>>) -> std::io::Result<()> {
-    STATE.with(|s| {
-        w.encode_gauge(
-            "internet_identity_user_count",
-            s.storage.borrow().user_count() as f64,
-            "Number of users registered in this canister.",
-        )?;
-        let (lo, hi) = s.storage.borrow().assigned_user_number_range();
-        w.encode_gauge(
-            "internet_identity_min_user_number",
-            lo as f64,
-            "The lowest Identity Anchor served by this canister.",
-        )?;
-        w.encode_gauge(
-            "internet_identity_max_user_number",
-            (hi - 1) as f64,
-            "The highest Identity Anchor that can be served by this canister.",
-        )?;
-        w.encode_gauge(
-            "internet_identity_signature_count",
-            s.sigs.borrow().len() as f64,
-            "Number of active signatures issued by this canister.",
-        )?;
-        w.encode_gauge(
-            "internet_identity_stable_memory_pages",
-            stable64_size() as f64,
-            "Number of stable memory pages used by this canister.",
-        )?;
-        w.encode_gauge(
-            "internet_identity_last_upgrade_timestamp",
-            s.last_upgrade_timestamp.get() as f64,
-            "The most recent IC time (in nanos) when this canister was successfully upgraded.",
-        )?;
-        w.encode_gauge(
-            "internet_identity_inflight_challenges",
-            s.inflight_challenges.borrow().len() as f64,
-            "The number of inflight CAPTCHA challenges",
-        )?;
-        Ok(())
-    })
-}
-
 #[query]
 fn http_request(req: HttpRequest) -> HttpResponse {
-    let parts: Vec<&str> = req.url.split('?').collect();
-    match parts[0] {
-        "/metrics" => {
-            let mut writer = MetricsEncoder::new(vec![], time() as i64 / 1_000_000);
-            match encode_metrics(&mut writer) {
-                Ok(()) => {
-                    let body = writer.into_inner();
-                    let mut headers = vec![
-                        (
-                            "Content-Type".to_string(),
-                            "text/plain; version=0.0.4".to_string(),
-                        ),
-                        ("Content-Length".to_string(), body.len().to_string()),
-                    ];
-                    headers.append(&mut security_headers());
-                    HttpResponse {
-                        status_code: 200,
-                        headers,
-                        body: Cow::Owned(ByteBuf::from(body)),
-                        streaming_strategy: None,
-                    }
-                }
-                Err(err) => HttpResponse {
-                    status_code: 500,
-                    headers: security_headers(),
-                    body: Cow::Owned(ByteBuf::from(format!("Failed to encode metrics: {}", err))),
-                    streaming_strategy: None,
-                },
-            }
-        }
-        probably_an_asset => {
-            let certificate_header = STATE.with(|s| {
-                make_asset_certificate_header(
-                    &s.asset_hashes.borrow(),
-                    &s.sigs.borrow(),
-                    probably_an_asset,
-                )
-            });
-            let mut headers = security_headers();
-            headers.push(certificate_header);
-
-            ASSETS.with(|a| match a.borrow().get(probably_an_asset) {
-                Some((asset_headers, value)) => {
-                    headers.append(&mut asset_headers.clone());
-
-                    HttpResponse {
-                        status_code: 200,
-                        headers,
-                        body: Cow::Borrowed(Bytes::new(value)),
-                        streaming_strategy: None,
-                    }
-                }
-                None => HttpResponse {
-                    status_code: 404,
-                    headers,
-                    body: Cow::Owned(ByteBuf::from(format!(
-                        "Asset {} not found.",
-                        probably_an_asset
-                    ))),
-                    streaming_strategy: None,
-                },
-            })
-        }
-    }
-}
-
-/// List of recommended security headers as per https://owasp.org/www-project-secure-headers/
-/// These headers enable browser security features (like limit access to platform apis and set
-/// iFrame policies, etc.).
-fn security_headers() -> Vec<HeaderField> {
-    let hash = assets::INDEX_HTML_SETUP_JS_SRI_HASH.to_string();
-    vec![
-        ("X-Frame-Options".to_string(), "DENY".to_string()),
-        ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
-
-        // Content Security Policy
-        //
-        // The sha256 hash matches the inline script in index.html. This inline script is a workaround
-        // for Firefox not supporting SRI (recommended here https://csp.withgoogle.com/docs/faq.html#static-content).
-        // This also prevents use of trusted-types. See https://bugzilla.mozilla.org/show_bug.cgi?id=1409200.
-        //
-        // script-src 'unsafe-eval' is required because agent-js uses a WebAssembly module for the
-        // validation of bls signatures.
-        // There is currently no other way to allow execution of WebAssembly modules with CSP.
-        // See https://github.com/WebAssembly/content-security-policy/blob/main/proposals/CSP.md.
-        //
-        // script-src 'unsafe-inline' https: are only there for backwards compatibility and ignored
-        // by modern browsers.
-        //
-        // style-src 'unsafe-inline' is currently required due to the way styles are handled by the
-        // application. Adding hashes would require a big restructuring of the application and build
-        // infrastructure.
-        //
-        // NOTE about `script-src`: we cannot use a normal script tag like this
-        //   <script src="index.js" integrity="sha256-..." defer></script>
-        // because Firefox does not support SRI with CSP: https://bugzilla.mozilla.org/show_bug.cgi?id=1409200
-        // Instead, we add it to the CSP policy
-        (
-            "Content-Security-Policy".to_string(),
-            format!("default-src 'none';\
-             connect-src 'self' https://ic0.app;\
-             img-src 'self' data:;\
-             script-src '{hash}' 'unsafe-inline' 'unsafe-eval' 'strict-dynamic' https:;\
-             base-uri 'none';\
-             frame-ancestors 'none';\
-             form-action 'none';\
-             style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;\
-             style-src-elem 'unsafe-inline' https://fonts.googleapis.com;\
-             font-src https://fonts.gstatic.com;\
-             upgrade-insecure-requests;")
-                .to_string()
-        ),
-        (
-            "Strict-Transport-Security".to_string(),
-            "max-age=31536000 ; includeSubDomains".to_string(),
-        ),
-        // "Referrer-Policy: no-referrer" would be more strict, but breaks local dev deployment
-        // same-origin is still ok from a security perspective
-        ("Referrer-Policy".to_string(), "same-origin".to_string()),
-        (
-            "Permissions-Policy".to_string(),
-            "accelerometer=(),\
-             ambient-light-sensor=(),\
-             autoplay=(),\
-             battery=(),\
-             camera=(),\
-             clipboard-read=(),\
-             clipboard-write=(self),\
-             conversion-measurement=(),\
-             cross-origin-isolated=(),\
-             display-capture=(),\
-             document-domain=(),\
-             encrypted-media=(),\
-             execution-while-not-rendered=(),\
-             execution-while-out-of-viewport=(),\
-             focus-without-user-activation=(),\
-             fullscreen=(),\
-             gamepad=(),\
-             geolocation=(),\
-             gyroscope=(),\
-             hid=(),\
-             idle-detection=(),\
-             interest-cohort=(),\
-             keyboard-map=(),\
-             magnetometer=(),\
-             microphone=(),\
-             midi=(),\
-             navigation-override=(),\
-             payment=(),\
-             picture-in-picture=(),\
-             publickey-credentials-get=(self),\
-             screen-wake-lock=(),\
-             serial=(),\
-             speaker-selection=(),\
-             sync-script=(),\
-             sync-xhr=(self),\
-             trust-token-redemption=(),\
-             usb=(),\
-             vertical-scroll=(),\
-             web-share=(),\
-             window-placement=(),\
-             xr-spatial-tracking=()"
-                .to_string(),
-        ),
-    ]
+    http::http_request(req)
 }
 
 #[query]
@@ -918,33 +959,6 @@ fn stats() -> InternetIdentityStats {
             users_registered: storage.user_count() as u64,
         }
     })
-}
-
-// used both in init and post_upgrade
-fn init_assets() {
-    use assets::ContentEncoding;
-
-    STATE.with(|s| {
-        let mut asset_hashes = s.asset_hashes.borrow_mut();
-
-        ASSETS.with(|a| {
-            let mut assets = a.borrow_mut();
-            for (path, content, content_encoding, content_type) in assets::get_assets() {
-                asset_hashes.insert(path, sha2::Sha256::digest(content).into());
-                let mut headers = match content_encoding {
-                    ContentEncoding::Identity => vec![],
-                    ContentEncoding::GZip => {
-                        vec![("Content-Encoding".to_string(), "gzip".to_string())]
-                    }
-                };
-                headers.push((
-                    "Content-Type".to_string(),
-                    content_type.to_mime_type_string(),
-                ));
-                assets.insert(path, (headers, content));
-            }
-        });
-    });
 }
 
 #[init]
@@ -1132,33 +1146,6 @@ fn add_signature(sigs: &mut SignatureMap, pk: PublicKey, seed: Hash, expiration:
     sigs.put(hash::hash_bytes(seed), msg_hash, expires_at);
 }
 
-fn make_asset_certificate_header(
-    asset_hashes: &AssetHashes,
-    sigs: &SignatureMap,
-    asset_name: &str,
-) -> (String, String) {
-    let certificate = data_certificate().unwrap_or_else(|| {
-        trap("data certificate is only available in query calls");
-    });
-    let witness = asset_hashes.witness(asset_name.as_bytes());
-    let tree = ic_certified_map::fork(
-        ic_certified_map::labeled(LABEL_ASSETS, witness),
-        HashTree::Pruned(ic_certified_map::labeled_hash(LABEL_SIG, &sigs.root_hash())),
-    );
-    let mut serializer = serde_cbor::ser::Serializer::new(vec![]);
-    serializer.self_describe().unwrap();
-    tree.serialize(&mut serializer)
-        .unwrap_or_else(|e| trap(&format!("failed to serialize a hash tree: {}", e)));
-    (
-        "IC-Certificate".to_string(),
-        format!(
-            "certificate=:{}:, tree=:{}:",
-            base64::encode(&certificate),
-            base64::encode(&serializer.into_inner())
-        ),
-    )
-}
-
 /// Removes a batch of expired signatures from the signature map.
 ///
 /// This function is supposed to piggy back on update calls to
@@ -1227,41 +1214,6 @@ fn check_frontend_length(frontend: &FrontendHostname) {
             "frontend hostname {} exceeds the limit of {} bytes",
             n, FRONTEND_HOSTNAME_LIMIT,
         ));
-    }
-}
-
-fn check_proof_of_work(pow: &ProofOfWork, now: Timestamp) {
-    use cubehash::CubeHash;
-
-    const DIFFICULTY: usize = 2;
-
-    if pow.timestamp < now.saturating_sub(POW_NONCE_LIFETIME) {
-        trap(&format!(
-            "proof of work timestamp {} is too old, current time: {}",
-            pow.timestamp, now
-        ));
-    }
-    if pow.timestamp > now.saturating_add(POW_NONCE_LIFETIME) {
-        trap(&format!(
-            "proof of work timestamp {} is too far in future, current time: {}",
-            pow.timestamp, now
-        ));
-    }
-
-    let mut hasher = CubeHash::new();
-    let domain = b"ic-proof-of-work";
-    hasher.update(&[domain.len() as u8]);
-    hasher.update(&domain[..]);
-    hasher.update(&pow.timestamp.to_le_bytes());
-    hasher.update(&pow.nonce.to_le_bytes());
-
-    let id = ic_cdk::api::id();
-    hasher.update(&[id.as_slice().len() as u8]);
-    hasher.update(id.as_slice());
-
-    let hash = hasher.finalize();
-    if !hash[0..DIFFICULTY].iter().all(|b| *b == 0) {
-        trap("proof of work hash check failed");
     }
 }
 

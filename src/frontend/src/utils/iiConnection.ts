@@ -8,27 +8,28 @@ import {
 import { idlFactory as internet_identity_idl } from "../../generated/internet_identity_idl";
 import {
   _SERVICE,
-  PublicKey,
-  SessionKey,
-  CredentialId,
+  AddTentativeDeviceResponse,
   Challenge,
-  UserNumber,
-  FrontendHostname,
-  Timestamp,
-  DeviceData,
-  ProofOfWork,
-  RegisterResponse,
-  GetDelegationResponse,
-  Purpose,
-  KeyType,
-  DeviceKey,
   ChallengeResult,
+  CredentialId,
+  DeviceData,
+  DeviceKey,
+  FrontendHostname,
+  GetDelegationResponse,
+  IdentityAnchorInfo,
+  KeyType,
+  PublicKey,
+  Purpose,
+  RegisterResponse,
+  SessionKey,
+  Timestamp,
+  UserNumber,
+  VerifyTentativeDeviceResponse,
 } from "../../generated/internet_identity_types";
 import {
   DelegationChain,
   DelegationIdentity,
   Ed25519KeyIdentity,
-  WebAuthnIdentity,
 } from "@dfinity/identity";
 import { Principal } from "@dfinity/principal";
 import { MultiWebAuthnIdentity } from "./multiWebAuthnIdentity";
@@ -36,8 +37,31 @@ import { hasOwnProperty } from "./utils";
 import * as tweetnacl from "tweetnacl";
 import { displayError } from "../components/displayError";
 import { fromMnemonicWithoutValidation } from "../crypto/ed25519";
+import { flavors } from "../flavors";
 
 declare const canisterId: string;
+
+/*
+ * A (dummy) identity that always uses the same keypair. The secret key is
+ * generated with a 32-byte \NUL seed.
+ * This identity must not be used in production.
+ */
+export class DummyIdentity
+  extends Ed25519KeyIdentity
+  implements IdentifiableIdentity
+{
+  public rawId: ArrayBuffer;
+
+  public constructor() {
+    const key = Ed25519KeyIdentity.generate(new Uint8Array(32));
+
+    const { secretKey, publicKey } = key.getKeyPair();
+    super(publicKey, secretKey);
+
+    // A dummy rawId
+    this.rawId = new Uint8Array(32);
+  }
+}
 
 // Check if the canister ID was defined before we even try to read it
 if (typeof canisterId !== undefined) {
@@ -52,10 +76,6 @@ if (typeof canisterId !== undefined) {
 }
 
 export const canisterIdPrincipal: Principal = Principal.fromText(canisterId);
-export const baseActor = Actor.createActor<_SERVICE>(internet_identity_idl, {
-  agent: new HttpAgent({}),
-  canisterId,
-});
 
 export const IC_DERIVATION_PATH = [44, 223, 0, 0, 0];
 
@@ -88,6 +108,10 @@ type SeedPhraseFail = { kind: "seedPhraseFail" };
 
 export type { ChallengeResult } from "../../generated/internet_identity_types";
 
+export interface IdentifiableIdentity extends SignIdentity {
+  rawId: ArrayBuffer;
+}
+
 export class IIConnection {
   protected constructor(
     public identity: SignIdentity,
@@ -96,7 +120,7 @@ export class IIConnection {
   ) {}
 
   static async register(
-    identity: WebAuthnIdentity,
+    identity: IdentifiableIdentity,
     alias: string,
     challengeResult: ChallengeResult
   ): Promise<RegisterResult> {
@@ -185,17 +209,24 @@ export class IIConnection {
     userNumber: bigint,
     devices: DeviceData[]
   ): Promise<LoginResult> {
-    const multiIdent = MultiWebAuthnIdentity.fromCredentials(
-      devices.flatMap((device) =>
-        device.credential_id.map((credentialId: CredentialId) => ({
-          pubkey: derFromPubkey(device.pubkey),
-          credentialId: Buffer.from(credentialId),
-        }))
-      )
-    );
+    /* Recover the Identity (i.e. key pair) used when creating the anchor.
+     * If "II_DUMMY_AUTH" is set, we use a dummy identity, the same identity
+     * that is used in the register flow.
+     */
+    const identity =
+      process.env.II_DUMMY_AUTH === "1"
+        ? new DummyIdentity()
+        : MultiWebAuthnIdentity.fromCredentials(
+            devices.flatMap((device) =>
+              device.credential_id.map((credentialId: CredentialId) => ({
+                pubkey: derFromPubkey(device.pubkey),
+                credentialId: Buffer.from(credentialId),
+              }))
+            )
+          );
     let delegationIdentity: DelegationIdentity;
     try {
-      delegationIdentity = await requestFEDelegation(multiIdent);
+      delegationIdentity = await requestFEDelegation(identity);
     } catch (e: unknown) {
       if (e instanceof Error) {
         return { kind: "authFail", error: e };
@@ -214,7 +245,7 @@ export class IIConnection {
       userNumber,
       connection: new IIConnection(
         // eslint-disable-next-line
-        multiIdent._actualIdentity!,
+        identity,
         delegationIdentity,
         actor
       ),
@@ -251,15 +282,13 @@ export class IIConnection {
   }
 
   static async lookupAll(userNumber: UserNumber): Promise<DeviceData[]> {
-    return await baseActor.lookup(userNumber);
+    const actor = await IIConnection.createActor();
+    return await actor.lookup(userNumber);
   }
 
-  static async createChallenge(pow: ProofOfWork): Promise<Challenge> {
+  static async createChallenge(): Promise<Challenge> {
     const actor = await this.createActor();
-    console.log(
-      `createChallenge(ProofOfWork { timestamp=${pow.timestamp}, nonce=${pow.nonce} })`
-    );
-    const challenge = await actor.create_challenge(pow);
+    const challenge = await actor.create_challenge();
     console.log("Challenge Created");
     return challenge;
   }
@@ -267,14 +296,36 @@ export class IIConnection {
   static async lookupAuthenticators(
     userNumber: UserNumber
   ): Promise<DeviceData[]> {
-    const allDevices = await baseActor.lookup(userNumber);
+    const actor = await IIConnection.createActor();
+    const allDevices = await actor.lookup(userNumber);
     return allDevices.filter((device) =>
       hasOwnProperty(device.purpose, "authentication")
     );
   }
 
+  static async addTentativeDevice(
+    userNumber: UserNumber,
+    alias: string,
+    keyType: KeyType,
+    purpose: Purpose,
+    newPublicKey: DerEncodedPublicKey,
+    credentialId?: ArrayBuffer
+  ): Promise<AddTentativeDeviceResponse> {
+    const actor = await IIConnection.createActor();
+    return await actor.add_tentative_device(userNumber, {
+      alias,
+      pubkey: Array.from(new Uint8Array(newPublicKey)),
+      credential_id: credentialId
+        ? [Array.from(new Uint8Array(credentialId))]
+        : [],
+      key_type: keyType,
+      purpose,
+    });
+  }
+
   static async lookupRecovery(userNumber: UserNumber): Promise<DeviceData[]> {
-    const allDevices = await baseActor.lookup(userNumber);
+    const actor = await IIConnection.createActor();
+    const allDevices = await actor.lookup(userNumber);
     return allDevices.filter((device) =>
       hasOwnProperty(device.purpose, "recovery")
     );
@@ -287,7 +338,7 @@ export class IIConnection {
     const agent = new HttpAgent({ identity: delegationIdentity });
 
     // Only fetch the root key when we're not in prod
-    if (process.env.II_ENV === "development") {
+    if (flavors.FETCH_ROOT_KEY) {
       await agent.fetchRootKey();
     }
     const actor = Actor.createActor<_SERVICE>(internet_identity_idl, {
@@ -315,6 +366,35 @@ export class IIConnection {
 
     return this.actor;
   }
+
+  getAnchorInfo = async (
+    userNumber: UserNumber
+  ): Promise<IdentityAnchorInfo> => {
+    const actor = await this.getActor();
+    return await actor.get_anchor_info(userNumber);
+  };
+
+  enterDeviceRegistrationMode = async (
+    userNumber: UserNumber
+  ): Promise<Timestamp> => {
+    const actor = await this.getActor();
+    return await actor.enter_device_registration_mode(userNumber);
+  };
+
+  exitDeviceRegistrationMode = async (
+    userNumber: UserNumber
+  ): Promise<void> => {
+    const actor = await this.getActor();
+    return await actor.exit_device_registration_mode(userNumber);
+  };
+
+  verifyTentativeDevice = async (
+    userNumber: UserNumber,
+    pin: string
+  ): Promise<VerifyTentativeDeviceResponse> => {
+    const actor = await this.getActor();
+    return await actor.verify_tentative_device(userNumber, pin);
+  };
 
   add = async (
     userNumber: UserNumber,

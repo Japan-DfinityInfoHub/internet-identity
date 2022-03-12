@@ -7,11 +7,10 @@ import {
   LoginFlowResult,
 } from "./login/flowResult";
 import { Challenge } from "../../generated/internet_identity_types";
-import { WebAuthnIdentity } from "@dfinity/identity";
-import getProofOfWork from "../crypto/pow";
 import { Principal } from "@dfinity/principal";
 import { withLoader } from "../components/loader";
 import {
+  IdentifiableIdentity,
   IIConnection,
   canisterIdPrincipal,
   ChallengeResult,
@@ -35,7 +34,7 @@ const pageContent = html`
 
 export const confirmRegister = (
   captcha: Promise<Challenge>,
-  identity: WebAuthnIdentity,
+  identity: IdentifiableIdentity,
   alias: string
 ): Promise<LoginFlowResult | null> => {
   const container = document.getElementById("pageContent") as HTMLElement;
@@ -44,7 +43,7 @@ export const confirmRegister = (
 };
 
 const tryRegister = (
-  identity: WebAuthnIdentity,
+  identity: IdentifiableIdentity,
   alias: string,
   challengeResult: ChallengeResult,
   func: (result: LoginFlowResult) => void
@@ -134,17 +133,11 @@ const requestCaptcha = (captcha?: Promise<Challenge>): void => {
   });
 };
 
-// This computes a PoW and requests a challenge from the II backend.
-// NOTE: The Proof-of-Work is computed in one go (one run of the event loop) so
-// nothing else will happen during that time. Better have a loading screen
-// shown to the user, or have all buttons disabled, because no other javascript
-// will run for a few seconds.
+// This requests a challenge from the II backend.
 export const makeCaptcha = (): Promise<Challenge> =>
   new Promise((resolve) => {
     setTimeout(() => {
-      const now_in_ns = BigInt(Date.now()) * BigInt(1000000);
-      const pow = getProofOfWork(now_in_ns, canisterIdPrincipal);
-      IIConnection.createChallenge(pow).then((cha) => {
+      IIConnection.createChallenge().then((cha) => {
         resolve(cha);
       });
     });
@@ -152,7 +145,7 @@ export const makeCaptcha = (): Promise<Challenge> =>
 
 const init = (
   canisterIdPrincipal: Principal,
-  identity: WebAuthnIdentity,
+  identity: IdentifiableIdentity,
   alias: string,
   captcha: Promise<Challenge>
 ): Promise<LoginFlowResult | null> => {
